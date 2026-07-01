@@ -1,0 +1,13 @@
+services:
+  claude-bridge:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - AGENT_WORKDIR=/agent
+    volumes:
+      - ./.claude/skills:/agent/.claude/skills
+      - ./memory:/agent/memory
+    ports:
+      - "8088:8088"
+    restart: unless-stopped
