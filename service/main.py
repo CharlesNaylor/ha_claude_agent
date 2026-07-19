@@ -8,13 +8,12 @@ The `/converse` endpoint negotiates on the request `Accept` header:
   the agent produces them.
 * anything else -> the original single `{"reply": "..."}` JSON object.
 """
-from __future__ import annotations
-
 import json
 import os
 from pathlib import Path
 from typing import AsyncIterator
 
+import dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -22,6 +21,8 @@ from pydantic import BaseModel
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, StreamEvent, query
 
 from memory_tool import memory_server
+
+dotenv.load_dotenv()
 
 WORKDIR = Path(os.environ.get("AGENT_WORKDIR", "."))  # contains .claude/skills/
 MEMORY = WORKDIR / "memory" / "home_memory.md"
@@ -134,3 +135,7 @@ async def converse(
         if isinstance(message, ResultMessage) and message.subtype == "success":
             final = message.result
     return {"reply": final}
+
+if __name__ == '__main__':
+    app()
+
