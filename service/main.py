@@ -32,6 +32,10 @@ SHARED_SECRET = os.environ["BRIDGE_SHARED_SECRET"]
 
 app = FastAPI()
 
+# Maps a Home Assistant conversation_id to the SDK session id of its last turn,
+# so follow-up utterances resume the same agent session (multi-turn context).
+_sessions: dict[str, str] = {}
+
 
 class Turn(BaseModel):
     text: str
@@ -43,11 +47,14 @@ def load_memory() -> str:
     return MEMORY.read_text() if MEMORY.exists() else "# Home memory\n(empty)\n"
 
 
-def build_options(include_partial_messages: bool = False) -> ClaudeAgentOptions:
+def build_options(
+    include_partial_messages: bool = False, resume: str | None = None
+) -> ClaudeAgentOptions:
     memory_text = load_memory()
     return ClaudeAgentOptions(
         cwd=str(WORKDIR),
         include_partial_messages=include_partial_messages,
+        resume=resume,  # resume a prior SDK session for multi-turn continuity
         setting_sources=["project"],  # REQUIRED to load .claude/skills/
         system_prompt={
             "type": "preset",
@@ -92,14 +99,17 @@ def _ndjson(event: dict) -> bytes:
     return (json.dumps(event) + "\n").encode("utf-8")
 
 
-async def _stream_events(text: str) -> AsyncIterator[bytes]:
+async def _stream_events(
+    text: str, conversation_id: str | None = None
+) -> AsyncIterator[bytes]:
     """Run the agent loop and emit NDJSON delta events as text is generated.
 
     Partial messages surface the raw Anthropic streaming events; we forward only
     `text_delta`s (spoken text), so thinking blocks and tool-call JSON never
     reach the voice pipeline.
     """
-    options = build_options(include_partial_messages=True)
+    resume = _sessions.get(conversation_id) if conversation_id else None
+    options = build_options(include_partial_messages=True, resume=resume)
     try:
         async for message in query(prompt=text, options=options):
             if isinstance(message, StreamEvent):
@@ -108,8 +118,11 @@ async def _stream_events(text: str) -> AsyncIterator[bytes]:
                     delta = event.get("delta") or {}
                     if delta.get("type") == "text_delta" and delta.get("text"):
                         yield _ndjson({"type": "delta", "text": delta["text"]})
-            elif isinstance(message, ResultMessage) and message.subtype != "success":
-                yield _ndjson({"type": "error", "message": message.subtype})
+            elif isinstance(message, ResultMessage):
+                if conversation_id and message.session_id:
+                    _sessions[conversation_id] = message.session_id
+                if message.subtype != "success":
+                    yield _ndjson({"type": "error", "message": message.subtype})
     except Exception as err:  # noqa: BLE001
         yield _ndjson({"type": "error", "message": str(err)})
     yield _ndjson({"type": "done"})
@@ -126,16 +139,24 @@ async def converse(
 
     if "application/x-ndjson" in accept:
         return StreamingResponse(
-            _stream_events(turn.text), media_type="application/x-ndjson"
+            _stream_events(turn.text, turn.conversation_id),
+            media_type="application/x-ndjson",
         )
 
     # Non-streaming fallback: run the loop and return the whole reply at once.
+    resume = _sessions.get(turn.conversation_id) if turn.conversation_id else None
     final = ""
-    async for message in query(prompt=turn.text, options=build_options()):
-        if isinstance(message, ResultMessage) and message.subtype == "success":
-            final = message.result
+    async for message in query(prompt=turn.text, options=build_options(resume=resume)):
+        if isinstance(message, ResultMessage):
+            if turn.conversation_id and message.session_id:
+                _sessions[turn.conversation_id] = message.session_id
+            if message.subtype == "success":
+                final = message.result
     return {"reply": final}
 
-if __name__ == '__main__':
-    app()
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8088")))
 
