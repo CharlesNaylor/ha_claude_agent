@@ -84,6 +84,8 @@ CALL_SERVICE_DOMAINS = {
 
 app = FastAPI()
 
+logger = logging.getLogger()
+
 # Maps a Home Assistant conversation_id to the SDK session id of its last turn,
 # so follow-up utterances resume the same agent session (multi-turn context).
 _sessions: dict[str, str] = {}
@@ -222,8 +224,8 @@ def build_options(
     )
 
 
-@app.get("/healthz")
-async def healthz() -> dict:
+@app.get("/health")
+async def health() -> dict:
     return {"status": "ok"}
 
 
@@ -296,4 +298,5 @@ async def converse(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8088")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("SERVER_PORT", "8090")))
+
