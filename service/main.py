@@ -8,7 +8,9 @@ The `/converse` endpoint negotiates on the request `Accept` header:
   the agent produces them.
 * anything else -> the original single `{"reply": "..."}` JSON object.
 """
+
 import json
+import logging
 import os
 from pathlib import Path
 from typing import AsyncIterator
@@ -23,6 +25,8 @@ from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, StreamEvent, que
 from memory_tool import memory_server
 
 dotenv.load_dotenv()
+
+logger = logging.getLogger()
 
 WORKDIR = Path(os.environ.get("AGENT_WORKDIR", "."))  # contains .claude/skills/
 MEMORY = WORKDIR / "memory" / "home_memory.md"
@@ -111,7 +115,9 @@ async def _stream_events(
     resume = _sessions.get(conversation_id) if conversation_id else None
     options = build_options(include_partial_messages=True, resume=resume)
     try:
+        logger.info("Trying prompt: %s", text)
         async for message in query(prompt=text, options=options):
+            logger.info("Got message: %s", message)
             if isinstance(message, StreamEvent):
                 event = message.event
                 if event.get("type") == "content_block_delta":
@@ -159,4 +165,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8088")))
-
